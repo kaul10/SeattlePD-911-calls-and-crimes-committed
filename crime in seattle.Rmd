@@ -1,0 +1,111 @@
+---
+title: "Seattle Police Department 911 Incident Response"
+author: "Aditya Kaul"
+date: "October 12, 2015"
+output: html_document
+---
+
+
+```{r, set-options,warning=FALSE,fig.width=10,fig.height=6, message=FALSE}
+options(width = 100)
+
+#Load the libraries required
+library(jsonlite)
+library(lattice)
+library(ggmap)
+library(sp)
+```
+
+**The data set is "Seattle Police Department 911 Incident Response."**
+
+_People have called 911 at different times in the city of Seattle for various incidents. The incidents are described by the column "initial_type_subgroup" which are further subgrouped under"initial_type_description"._
+
+_The SPD has divided different areas in the city by "district_sectors" which are further subdivided into smaller zones indicated by the column "zone_beat". Also, each incident has been given a reference number indicated by the column name "cad_event_number" and "cad_cdw_id"._
+
+_Depending on where the crime was reported from, a latitude and longitude were collected using which we can get the approximate location of where the incident/crime occurred. The assumption here is that the 911 call was made from the same location or from a location close to the scene of the crime. The variable "at_scene_time" gives us a time when the incident/crime was reported through 911 to the SPD._
+
+```{r, warning=FALSE,fig.width=10,fig.height=6, message=FALSE}
+
+#Get the data from Socrata's open data website and save it in a variable called spd911
+spd911 <- fromJSON("https://data.seattle.gov/resource/3k2p-39jp.json")
+#Look at the top 6 rows of the data frame
+head(spd911)
+#Look at all the column names in the data frame
+colnames(spd911)
+#Look at the structure of the data frame
+str(spd911)
+```
+
+_Since our analyses does not include all the columns we would like to get rid of the data that is not important for our analyses. This does not mean that the data is of no use. The removed data can be used in another analyses._
+
+_We first remove all such columns and then we perform further data cleaning by type casting certain columns to appropriate data types which would make analysis easy for us_
+
+```{r, warning=FALSE,fig.width=10,fig.height=6, message=FALSE}
+
+#These are the columns that are of least use to us and for our analysis we do not require them, hence we simply remove these columns
+spd911$event_clearance_code<-NULL
+spd911$event_clearance_group<-NULL
+spd911$event_clearance_subgroup<-NULL
+spd911$event_clearance_description<-NULL
+spd911$incident_location<-NULL
+
+#After performing some basic data cleaning we also need to perform type casting to ensure that all the columns in the data frame can be used appropriately
+spd911$cad_cdw_id<-as.integer(spd911$cad_cdw_id)
+spd911$general_offense_number<-as.integer(spd911$general_offense_number)
+spd911$district_sector<-as.factor(spd911$district_sector)
+spd911$longitude<-as.numeric(spd911$longitude)
+spd911$latitude<-as.numeric(spd911$latitude)
+#Since there is an additional "T" in the time we need to replace it by a blank space
+spd911$at_scene_time<-gsub("T"," ",spd911$at_scene_time)  
+spd911$at_scene_time<-as.POSIXct(spd911$at_scene_time)
+
+#Look at the structure of the cleaned data frame
+str(spd911)
+```
+
+_We want to plot a map of Seattle that shows the areas where the crimes occurred, rather, where the crimes were reported from. If we analyze the data points on the map we can see that although the calls are spread out all over Seattle, there is a high concentration of calls that is made from the center close to Capitol Hill and Downtown Seattle. This is something that we can look into as to why the crime rate is so high in these areas._
+
+```{r, warning=FALSE,fig.width=10,fig.height=6, message=FALSE}
+
+#change the crimes data into a SpatialPointsDataFrame
+coords <- cbind(longitude = as.numeric(as.character(spd911$longitude)), latitude=as.numeric(as.character(spd911$latitude)))
+crime_points <- SpatialPointsDataFrame(coords, spd911[, -(9:10)])
+#Plot just the points where the crime occurred without a map of the city
+plot(crime_points, pch = ".", col = "darkred",cex=4)
+
+#Create a map of seattle
+map <- qmap('Seattle',zoom=11,maptype='hybrid')
+#Plot the crime points on top of the map that we created to show the locations where the crimes occurred
+map + geom_point(data = spd911, aes(x = spd911$longitude, y = spd911$latitude),  color="red", size=3, alpha=0.4,na.rm = T)+xlab("Longitude")+ylab("Latitude")
+```
+
+_We would also like to see what type of crimes occur by district sectors. To further analyze the data we can see their frequency in each sub sector, that is, the different zone beats that the crimes occur in which are encoded by color in the visualization._
+
+```{r, warning=FALSE,fig.width=10,fig.height=6, message=FALSE}
+
+#Create a list that contains all the district sectors in our data frame
+district_sector_list<-list(as.character(unique(spd911$district_sector)))
+#district_sector_list[[1]][1]
+
+#Create a for loop that takes each individual district sectors
+for(i in 1:length(district_sector_list[[1]])){
+  
+  #Store the district sector in a variable
+  sector<-district_sector_list[[1]][i]
+  #Create a smaller subset data frame for a specific district sector
+  subset_sector<-subset(spd911,district_sector==sector)
+
+  #Use xtabs() function on a factor to get a contingency table to make it easier to create a histogram
+  initial_type_description_subgroup<-xtabs(~subset_sector$initial_type_subgroup)
+  #Modify the margin to ensure the graph and the details are all visible
+  par(mar=c(10,3,3,1))
+  #Create a barplot
+  barplot(initial_type_description_subgroup,col = as.factor(subset_sector$zone_beat),
+  ylim=c(0,20),las=2,cex.names = 0.5,xlab = "")
+  legend("topright",pch = 20,col=unique(as.factor(subset_sector$zone_beat)),
+  legend=unique(subset_sector$zone_beat),cex = 1,title = "Zone Beats")
+  mtext("Crimes Committed",side = 1,line = 9)
+}
+```
+
+_One of the biases of our analysis is that we have assumed that the calls to 911 were made from the same location or close to the same location as to where the crime was committed_
